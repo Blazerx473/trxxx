@@ -1,0 +1,1455 @@
+import mysql.connector
+from mysql.connector import Error
+import tkinter as tk
+from tkinter import ttk, messagebox
+from PIL import Image, ImageTk
+from tkcalendar import DateEntry
+import random
+from tkinter.ttk import Style
+import os
+from io import BytesIO
+import requests
+
+# Database configuration
+DB_CONFIG = {
+    'host': 'localhost',
+    'user': 'root',
+    'password': 'admin',
+    'database': 'train_booking'
+}
+
+# Sample travel packages
+TRAVEL_PACKAGES = [
+    {
+        'name': 'London Adventure',
+        'description': 'Experience the charm of London',
+        'price': '₹150,000',
+        'duration': '7 days',
+        'image_path': r'C:\Users\Lenovo\Downloads\london.jpg'  # Placeholder image
+    },
+    {
+        'name': 'Paris Romance',
+        'description': 'Fall in love with the city of lights',
+        'price': '₹180,000',
+        'duration': '6 days',
+        'image_path': r'C:\Users\Lenovo\Downloads\paris.jpg'
+    },
+    {
+        'name': 'Tokyo Explorer',
+        'description': 'Discover the blend of tradition and technology',
+        'price': '₹200,000',
+        'duration': '8 days',
+        'image_path': r'C:\Users\Lenovo\Downloads\tokyo-tower-japan-4k-wallpaper-preview.jpg'
+    },
+    {
+        'name': 'New York City',
+        'description': 'Experience the city that never sleeps',
+        'price': '₹220,000',
+        'duration': '5 days',
+        'image_path': r'C:\Users\Lenovo\Downloads\nyc.jpg'
+    }
+]
+
+
+# Database functions
+def create_connection():
+    try:
+        conn = mysql.connector.connect(**DB_CONFIG)
+        return conn
+    except Error as e:
+        print(f"Error connecting to MySQL database: {e}")
+        return None
+
+def create_tables(conn):
+    try:
+        cursor = conn.cursor()
+        
+        # Users table
+        cursor.execute('''CREATE TABLE IF NOT EXISTS Users (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            username VARCHAR(255) NOT NULL UNIQUE,
+            password VARCHAR(255) NOT NULL
+        )''')
+        
+        # Trains table
+        cursor.execute('''CREATE TABLE IF NOT EXISTS Trains (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            train_number VARCHAR(50),
+            name VARCHAR(255),
+            source VARCHAR(255),
+            destination VARCHAR(255),
+            seats INT
+        )''')
+        
+        # CoachTypes table
+        cursor.execute('''CREATE TABLE IF NOT EXISTS CoachTypes (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            name VARCHAR(255) NOT NULL,
+            base_price DECIMAL(10,2) NOT NULL
+        )''')
+        
+        # Bookings table
+        cursor.execute('''CREATE TABLE IF NOT EXISTS Bookings (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            train_id INT,
+            coach_type VARCHAR(255),
+            passenger_name VARCHAR(255),
+            age INT,
+            sex VARCHAR(50),
+            num_passengers INT,
+            date DATE,
+            total_price DECIMAL(10,2),
+            FOREIGN KEY (train_id) REFERENCES Trains(id)
+        )''')
+        
+        # Insert sample coach types if the table is empty
+        cursor.execute("SELECT COUNT(*) FROM CoachTypes")
+        if cursor.fetchone()[0] == 0:
+            sample_coaches = [
+                ('Second Sitting', 50.0),
+                ('Sleeper', 100.0),
+                ('AC Chair Car', 150.0),
+                ('AC 3 Tier', 200.0),
+                ('AC 2 Tier', 250.0),
+                ('AC First Class', 300.0)
+            ]
+            cursor.executemany('''INSERT INTO CoachTypes (name, base_price)
+                              VALUES (%s, %s)''', sample_coaches)
+        
+        conn.commit()
+    except Error as e:
+        print(f"Error creating tables: {e}")
+
+def insert_user(conn, username, password):
+    try:
+        cursor = conn.cursor()
+        sql = '''INSERT INTO Users(username, password)
+                 VALUES(%s, %s)'''
+        cursor.execute(sql, (username, password))
+        conn.commit()
+    except Error as e:
+        print(f"Error inserting user: {e}")
+
+def authenticate_user(conn, username, password):
+    try:
+        cursor = conn.cursor()
+        cursor.execute('''SELECT * FROM Users WHERE username = %s AND password = %s''', 
+                      (username, password))
+        user = cursor.fetchone()
+        return user is not None
+    except Error as e:
+        print(f"Error authenticating user: {e}")
+        return False
+
+def insert_sample_trains(conn):
+    try:
+        cursor = conn.cursor()
+        sample_trains = [
+            ('12951', 'Rajdhani Express', 'Delhi', 'Mumbai', 500),
+            ('12952', 'Shatabdi Express', 'Delhi', 'Mumbai', 400),
+            ('19011', 'Gujarat Express', 'Mumbai', 'Ahmedabad', 350),
+            ('12953', 'August Kranti', 'Delhi', 'Mumbai', 450),
+            ('12954', 'Tejas Express', 'Delhi', 'Mumbai', 300)
+        ]
+        
+        cursor.executemany('''INSERT IGNORE INTO Trains 
+                          (train_number, name, source, destination, seats)
+                          VALUES (%s, %s, %s, %s, %s)''', sample_trains)
+        conn.commit()
+    except Error as e:
+        print(f"Error inserting sample trains: {e}")
+def set_background(root, image_path):
+    background_image = Image.open(image_path)
+    background_image = background_image.resize((root.winfo_screenwidth(), root.winfo_screenheight()), Image.LANCZOS)
+    background_photo = ImageTk.PhotoImage(background_image)
+    
+    background_label = tk.Label(root, image=background_photo)
+    background_label.image = background_photo  # Keep a reference to avoid garbage collection
+    background_label.place(relwidth=1, relheight=1, relx=0, rely=0)  # Place the background label at the bottom
+# Define custom styles for buttons
+def setup_styles():
+    style = ttk.Style()
+    
+    # Define custom styles for all buttons
+    style.configure('Logout.TButton',
+                   background='#e0281b',  # Red
+                   foreground='white',
+                   font=('Helvetica', 12, 'bold'),
+                   padding=10)
+    style.map('Logout.TButton',
+              background=[('active', '#c41e12')])  # Darker red on hover
+
+    style.configure('Search.TButton',
+                   background='#2f1569',  # Dark purple
+                   foreground='white',
+                   font=('Helvetica', 12, 'bold'),
+                   padding=10)
+    style.map('Search.TButton',
+              background=[('active', '#251150')])  # Darker purple on hover
+
+    style.configure('MyBookings.TButton',
+                   background='#09dceb',  # Cyan
+                   foreground='white',
+                   font=('Helvetica', 12, 'bold'),
+                   padding=10)
+    style.map('MyBookings.TButton',
+              background=[('active', '#08c4d1')])  # Darker cyan on hover
+    
+class TrainBookingApp:
+    def __init__(self, root, conn):
+        self.conn = conn
+        self.root = root
+        self.selected_train_id = None
+        self.root.title("Train Booking App")
+        self.root.state('zoomed')
+        # Create a background frame attribute
+        self.background_frame = None
+        self.show_home_screen()
+
+    def show_home_screen(self):
+    # Clear existing widgets
+        for widget in self.root.winfo_children():
+            widget.destroy()
+
+        # Set background
+        set_background(self.root, r"C:\Users\Lenovo\Downloads\DALL·E 2024-10-16 17.02.11 - A sleek, modern train traveling through a scenic natural landscape. The train is futuristic in design with large windows, smooth metallic surfaces, an.png")
+
+        # Create main container frame that takes full width
+        main_frame = tk.Frame(self.root, bg='#ffffff')
+        main_frame.place(relx=0.5, rely=0.5, anchor='center', relwidth=0.95, relheight=0.9)
+
+        # Header Frame (Fixed at top)
+        header_frame = tk.Frame(main_frame, bg='#1a73e8', height=60)
+        header_frame.pack(fill="x", pady=(0, 20))
+        header_frame.pack_propagate(False)
+
+        # Welcome text - centered
+        welcome_label = tk.Label(header_frame, 
+                               text="Welcome to Train Booking System", 
+                               font=('Helvetica', 24, 'bold'), 
+                               bg="#1a73e8", 
+                               fg="white")
+        welcome_label.pack(side="left", expand=True)
+
+        # Navigation buttons frame
+        nav_frame = tk.Frame(header_frame, bg="#1a73e8")
+        nav_frame.pack(side="right", padx=20)
+
+        # Create custom styles for each button
+        style = ttk.Style()
+        
+        # Search Trains button style - Purple
+        style.configure('Search.TButton', 
+                       background='#2f1569',
+                       foreground='white',
+                       padding=(10, 5),
+                       font=('Helvetica', 10, 'bold'))
+        
+        # My Bookings button style - Cyan
+        style.configure('MyBookings.TButton', 
+                       background='#09dceb',
+                       foreground='white',
+                       padding=(10, 5),
+                       font=('Helvetica', 10, 'bold'))
+        
+        # Logout button style - Red
+        style.configure('Logout.TButton', 
+                       background='#e0281b',
+                       foreground='white',
+                       padding=(10, 5),
+                       font=('Helvetica', 10, 'bold'))
+
+        # Navigation buttons with custom colors
+        # Search Trains - Purple
+        search_button = tk.Button(nav_frame,
+                                text="Search Trains",
+                                command=self.show_search_trains_screen,
+                                bg='#2f1569',
+                                fg='white',
+                                font=('Helvetica', 10, 'bold'),
+                                relief='flat',
+                                padx=15,
+                                pady=5)
+        search_button.pack(side="left", padx=10)
+
+        # My Bookings - Cyan
+        bookings_button = tk.Button(nav_frame,
+                                  text="My Bookings",
+                                  command=self.show_my_bookings,
+                                  bg='#09dceb',
+                                  fg='white',
+                                  font=('Helvetica', 10, 'bold'),
+                                  relief='flat',
+                                  padx=15,
+                                  pady=5)
+        bookings_button.pack(side="left", padx=10)
+
+        # Logout - Red
+        logout_button = tk.Button(nav_frame,
+                                text="Logout",
+                                command=self.logout,
+                                bg='#e0281b',
+                                fg='white',
+                                font=('Helvetica', 10, 'bold'),
+                                relief='flat',
+                                padx=15,
+                                pady=5)
+        logout_button.pack(side="left", padx=10)
+
+        # Create a canvas with scrollbar
+        canvas = tk.Canvas(main_frame, bg='#f0f0f0', highlightthickness=0)
+        scrollbar = ttk.Scrollbar(main_frame, orient="vertical", command=canvas.yview)
+        scrollable_frame = tk.Frame(canvas, bg='#f0f0f0')
+
+        # Configure the canvas
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+
+        # Create a window inside the canvas to hold the scrollable frame
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        
+        # Configure canvas to expand with the main frame
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        
+        # Connect scrollbar to canvas
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        # Featured Packages heading - centered
+        tk.Label(scrollable_frame, 
+                text="Featured Travel Packages", 
+                font=('Helvetica', 28, 'bold'), 
+                bg="#f0f0f0").pack(pady=(30, 40))
+
+        # Create packages grid
+        packages_frame = tk.Frame(scrollable_frame, bg="#f0f0f0")
+        packages_frame.pack(fill="both", expand=True, padx=40)
+
+        # Configure grid columns to be equal width
+        packages_frame.grid_columnconfigure(0, weight=1)
+        packages_frame.grid_columnconfigure(1, weight=1)
+        packages_frame.grid_columnconfigure(2, weight=1)
+
+        # Add packages in a 3-column grid
+        row = 0
+        col = 0
+        for package in TRAVEL_PACKAGES:
+            self.create_package_card(packages_frame, package, row, col)
+            col += 1
+            if col > 2:
+                col = 0
+                row += 1
+
+        # Bind mouse wheel to scrolling
+        def _on_mousewheel(event):
+            canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+        
+        canvas.bind_all("<MouseWheel>", _on_mousewheel)
+        # Update the create_package_card method
+    def create_package_card(self, parent, package, row, col):
+        # Card frame with white background and raised border
+        card = tk.Frame(parent, bg="white", relief="raised", bd=1)
+        card.grid(row=row, column=col, padx=15, pady=15, sticky="nsew")
+
+        try:
+            # Load and resize image to be larger
+            image = Image.open(package['image_path'])
+            image = image.resize((350, 250), Image.LANCZOS)  # Increased size
+            photo = ImageTk.PhotoImage(image)
+            
+            # Create label with image
+            image_label = tk.Label(card, image=photo, bg="white")
+            image_label.image = photo  # Keep a reference
+            image_label.pack(fill="both")
+        except Exception as e:
+            # Fallback if image loading fails
+            image_label = tk.Label(card, width=45, height=15, bg="gray", text="Image not available")
+            image_label.pack(fill="both")
+
+        # Package details with enhanced styling
+        tk.Label(card, text=package['name'], 
+                font=('Helvetica', 18, 'bold'), 
+                bg="white").pack(pady=(15, 5))
+        
+        tk.Label(card, text=package['description'], 
+                font=('Helvetica', 12),
+                bg="white", wraplength=320).pack(pady=5)
+        
+        tk.Label(card, text=f"Duration: {package['duration']}", 
+                font=('Helvetica', 12),
+                bg="white").pack(pady=5)
+        
+        tk.Label(card, text=f"Price: {package['price']}", 
+                font=('Helvetica', 14, 'bold'), 
+                bg="white", fg="#1a73e8").pack(pady=5)
+
+        # View Details button with improved styling
+        view_button = tk.Button(card, text="View Details",
+                              command=lambda p=package: self.show_package_details(p),
+                              bg="#1a73e8", fg="white",
+                              font=('Helvetica', 11, 'bold'),
+                              relief="flat",
+                              padx=20, pady=8)
+        view_button.pack(pady=(10, 20))
+        # Configure grid column weights
+        parent.grid_columnconfigure(0, weight=1)
+        parent.grid_columnconfigure(1, weight=1)
+        
+    def show_package_details(self, package):
+        # Create a new window for package details
+        details_window = tk.Toplevel(self.root)
+        details_window.title(package['name'])
+        details_window.geometry("600x400")
+        
+        # Add detailed information about the package
+        tk.Label(details_window, text=package['name'], 
+                font=('Helvetica', 20, 'bold')).pack(pady=20)
+        tk.Label(details_window, text=package['description']).pack()
+        tk.Label(details_window, text=f"Duration: {package['duration']}").pack()
+        tk.Label(details_window, text=f"Price: {package['price']}").pack()
+        
+        # Add more details as needed
+        ttk.Button(details_window, text="Book Now", 
+                  command=lambda: self.book_package(package)).pack(pady=20)
+
+    def book_package(self, package):
+        messagebox.showinfo("Booking", 
+                          f"Booking process for {package['name']} will be implemented soon!")
+
+    def show_search_trains_screen(self):
+    # Clear existing widgets while preserving the background
+        for widget in self.root.winfo_children():
+            if not isinstance(widget, tk.Label) or not hasattr(widget, 'image'):
+                widget.destroy()
+
+        # Create the main frame with transparency
+        main_frame = tk.Frame(self.root, bg='#ffffff')
+        main_frame.place(relx=0.5, rely=0.5, anchor='center', relwidth=0.8, relheight=0.8)
+
+        # Create a semi-transparent overlay
+        overlay_frame = tk.Frame(main_frame, bg='#ffffff')
+        overlay_frame.place(relx=0, rely=0, relwidth=1, relheight=1)
+        overlay_frame.configure(bg='#ffffff')
+        
+        # Header Frame
+        header_frame = tk.Frame(overlay_frame, bg='#1a73e8', height=60)
+        header_frame.pack(fill="x", pady=(0, 20))
+        header_frame.pack_propagate(False)
+
+
+        # Back button
+       # Back button (changed from ttk.Button to tk.Button for better color control)
+        back_button = tk.Button(header_frame, 
+                                text="← Back to Home", 
+                                command=self.show_home_screen,
+                                bg='#dec8c3',
+                                fg='black',
+                                font=('Helvetica', 11),
+                                relief="flat",
+                                padx=15,
+                                pady=5,
+                                activebackground='#c9b1ac',  # slightly darker shade for hover
+                                cursor='hand2')
+        back_button.pack(side="left", padx=20, pady=10)
+
+        # Title
+        tk.Label(header_frame, 
+                text="Search Trains", 
+                font=('Helvetica', 24, 'bold'), 
+                bg="#1a73e8", 
+                fg="white").pack(side="left", padx=20, pady=10)
+
+        # Search Panel
+        search_panel = tk.Frame(overlay_frame, bg='white', bd=2, relief="raised")
+        search_panel.pack(fill="x", padx=50, pady=20)
+
+        # Search inputs with improved layout
+        input_frame = tk.Frame(search_panel, bg='white', pady=20)
+        input_frame.pack(fill="x", padx=20)
+
+        # From field
+        from_frame = tk.Frame(input_frame, bg='white')
+        from_frame.pack(side="left", expand=True, padx=10)
+        tk.Label(from_frame, 
+                text="From:", 
+                font=('Helvetica', 12, 'bold'),
+                bg='white').pack(anchor="w")
+        self.search_departure_entry = ttk.Entry(from_frame, width=25)
+        self.search_departure_entry.pack(fill="x", pady=5)
+
+        # To field
+        to_frame = tk.Frame(input_frame, bg='white')
+        to_frame.pack(side="left", expand=True, padx=10)
+        tk.Label(to_frame, 
+                text="To:", 
+                font=('Helvetica', 12, 'bold'),
+                bg='white').pack(anchor="w")
+        self.search_arrival_entry = ttk.Entry(to_frame, width=25)
+        self.search_arrival_entry.pack(fill="x", pady=5)
+
+        # Date field
+        date_frame = tk.Frame(input_frame, bg='white')
+        date_frame.pack(side="left", expand=True, padx=10)
+        tk.Label(date_frame, 
+                text="Date:", 
+                font=('Helvetica', 12, 'bold'),
+                bg='white').pack(anchor="w")
+        self.search_date_entry = DateEntry(date_frame, 
+                                         width=23,
+                                         background='#1a73e8',
+                                         foreground='white',
+                                         borderwidth=2,
+                                         date_pattern='yyyy-mm-dd')
+        self.search_date_entry.pack(fill="x", pady=5)
+
+        # Search button
+        search_button = tk.Button(input_frame,
+                                text="Search Trains",
+                                command=self.search_trains,
+                                bg='#1a73e8',
+                                fg='white',
+                                font=('Helvetica', 11, 'bold'),
+                                relief="flat",
+                                padx=30,
+                                pady=10)
+        search_button.pack(side="left", padx=20, pady=5)
+
+        # Results Frame
+        results_frame = tk.Frame(overlay_frame, bg='white', bd=2, relief="raised")
+        results_frame.pack(fill="both", expand=True, padx=50, pady=20)
+
+        # Results Header
+        tk.Label(results_frame,
+                text="Available Trains",
+                font=('Helvetica', 16, 'bold'),
+                bg='white').pack(pady=10)
+
+        # Train List with improved styling
+        self.train_list = tk.Listbox(results_frame,
+                                    height=12,
+                                    font=('Helvetica', 11),
+                                    selectmode='single',
+                                    activestyle='none',
+                                    selectbackground='#1a73e8',
+                                    selectforeground='white')
+        self.train_list.pack(fill="both", expand=True, padx=20, pady=10)
+        self.train_list.bind('<<ListboxSelect>>', self.on_train_select)
+
+        # Add a scrollbar to the listbox
+        scrollbar = ttk.Scrollbar(results_frame, orient="vertical", command=self.train_list.yview)
+        scrollbar.pack(side="right", fill="y")
+        self.train_list.config(yscrollcommand=scrollbar.set)
+
+        # Book button
+        book_button = tk.Button(results_frame,
+                              text="Book Selected Train",
+                              command=self.book_train,
+                              bg='#1a73e8',
+                              fg='white',
+                              font=('Helvetica', 11, 'bold'),
+                              relief="flat",
+                              padx=30,
+                              pady=10)
+        book_button.pack(pady=20)
+
+        # Add some initial style to the listbox
+        self.train_list.configure(
+            selectmode="single",
+            borderwidth=0,
+            highlightthickness=1,
+            highlightcolor="#1a73e8",
+            highlightbackground="#dddddd"
+        )
+
+
+    # Add this method to the TrainBookingApp class
+
+    def show_my_bookings(self):
+    # Clear existing widgets while preserving the background
+        for widget in self.root.winfo_children():
+            if not isinstance(widget, tk.Label) or not hasattr(widget, 'image'):
+                widget.destroy()
+
+        # Create main frame
+        main_frame = tk.Frame(self.root, bg='#ffffff')
+        main_frame.place(relx=0.5, rely=0.5, anchor='center', relwidth=0.8, relheight=0.8)
+
+        # Header Frame
+        header_frame = tk.Frame(main_frame, bg='#1a73e8', height=60)
+        header_frame.pack(fill="x", pady=(0, 20))
+        header_frame.pack_propagate(False)
+
+        # Back button
+        back_button = ttk.Button(header_frame, 
+                                text="← Back to Home", 
+                                command=self.show_home_screen,
+                                style='Nav.TButton')
+        back_button.pack(side="left", padx=20, pady=10)
+
+        # Title
+        tk.Label(header_frame, 
+                text="My Bookings", 
+                font=('Helvetica', 24, 'bold'), 
+                bg="#1a73e8", 
+                fg="white").pack(side="left", padx=20, pady=10)
+
+        # Create a frame for the bookings list
+        bookings_frame = tk.Frame(main_frame, bg='white', bd=2, relief="raised")
+        bookings_frame.pack(fill="both", expand=True, padx=50, pady=20)
+
+        # Create Treeview for bookings
+        columns = ('Booking ID', 'Train', 'Date', 'Passenger', 'Coach', 'Total Price', 'Status')
+        tree = ttk.Treeview(bookings_frame, columns=columns, show='headings')
+
+        # Set column headings
+        for col in columns:
+            tree.heading(col, text=col)
+            tree.column(col, width=100)  # Adjust width as needed
+
+        # Add scrollbar
+        scrollbar = ttk.Scrollbar(bookings_frame, orient="vertical", command=tree.yview)
+        scrollbar.pack(side="right", fill="y")
+        tree.configure(yscrollcommand=scrollbar.set)
+        tree.pack(fill="both", expand=True, padx=10, pady=10)
+
+        try:
+            cursor = self.conn.cursor()
+            
+            # Query to get booking details
+            query = """
+            SELECT b.id, t.name, b.date, b.passenger_name, 
+                   b.coach_type, b.total_price,
+                   CASE 
+                       WHEN b.date >= CURDATE() THEN 'Upcoming'
+                       ELSE 'Completed'
+                   END as status
+            FROM Bookings b
+            JOIN Trains t ON b.train_id = t.id
+            ORDER BY b.date DESC
+            """
+            
+            cursor.execute(query)
+            bookings = cursor.fetchall()
+
+            # Insert bookings into treeview
+            for booking in bookings:
+                # Format the price with rupee symbol
+                formatted_price = f"₹{booking[5]:.2f}"
+                # Replace the price in the booking tuple
+                booking_data = booking[:5] + (formatted_price,) + booking[6:]
+                tree.insert('', 'end', values=booking_data)
+
+            # Add style to the treeview
+            style = ttk.Style()
+            style.configure("Treeview",
+                           background="white",
+                           foreground="black",
+                           rowheight=25,
+                           fieldbackground="white")
+            style.configure("Treeview.Heading",
+                           background="#1a73e8",
+                           foreground="white",
+                           relief="flat")
+            style.map("Treeview",
+                     background=[('selected', '#1a73e8')])
+
+        except Error as e:
+            messagebox.showerror("Error", f"Failed to fetch bookings: {str(e)}")
+        finally:
+            if cursor:
+                cursor.close()
+
+        # Add action buttons frame
+        action_frame = tk.Frame(main_frame, bg='white')
+        action_frame.pack(fill="x", padx=50, pady=10)
+
+        def view_booking_details():
+            selected_item = tree.selection()
+            if not selected_item:
+                messagebox.showwarning("No Selection", "Please select a booking to view details")
+                return
+            
+            booking_id = tree.item(selected_item[0])['values'][0]
+            # Add detailed view implementation here
+            show_booking_details(booking_id)
+
+        def cancel_booking():
+            selected_item = tree.selection()
+            if not selected_item:
+                messagebox.showwarning("No Selection", "Please select a booking to cancel")
+                return
+            
+            booking_id = tree.item(selected_item[0])['values'][0]
+            status = tree.item(selected_item[0])['values'][6]
+            
+            if status == 'Completed':
+                messagebox.showwarning("Cannot Cancel", "Cannot cancel a completed booking")
+                return
+                
+            if messagebox.askyesno("Confirm Cancellation", "Are you sure you want to cancel this booking?"):
+                try:
+                    cursor = self.conn.cursor()
+                    cursor.execute("DELETE FROM Bookings WHERE id = %s", (booking_id,))
+                    self.conn.commit()
+                    messagebox.showinfo("Success", "Booking cancelled successfully")
+                    self.show_my_bookings()  # Refresh the bookings list
+                except Error as e:
+                    messagebox.showerror("Error", f"Failed to cancel booking: {str(e)}")
+                finally:
+                    if cursor:
+                        cursor.close()
+
+        # Add buttons
+        ttk.Button(action_frame, text="View Details", command=view_booking_details).pack(side="left", padx=5)
+        ttk.Button(action_frame, text="Cancel Booking", command=cancel_booking).pack(side="left", padx=5)
+
+    def show_booking_details(self, booking_id):
+        try:
+            cursor = self.conn.cursor()
+            query = """
+            SELECT b.*, t.name as train_name, t.train_number
+            FROM Bookings b
+            JOIN Trains t ON b.train_id = t.id
+            WHERE b.id = %s
+            """
+            cursor.execute(query, (booking_id,))
+            booking = cursor.fetchone()
+
+            if booking:
+                details_window = tk.Toplevel(self.root)
+                details_window.title(f"Booking Details - {booking_id}")
+                details_window.geometry("400x500")
+                details_window.configure(bg='white')
+
+                # Center the window
+                window_width = 400
+                window_height = 500
+                screen_width = details_window.winfo_screenwidth()
+                screen_height = details_window.winfo_screenheight()
+                x = (screen_width - window_width) // 2
+                y = (screen_height - window_height) // 2
+                details_window.geometry(f"{window_width}x{window_height}+{x}+{y}")
+
+                # Create main frame
+                main_frame = ttk.Frame(details_window, padding="20")
+                main_frame.pack(fill="both", expand=True)
+
+                # Add details
+                ttk.Label(main_frame, text="Booking Details", 
+                         font=('Helvetica', 16, 'bold')).pack(pady=10)
+
+                details = [
+                    ("Booking ID", booking_id),
+                    ("Train", f"{booking['train_name']} ({booking['train_number']})"),
+                    ("Date", booking['date']),
+                    ("Passenger Name", booking['passenger_name']),
+                    ("Age", booking['age']),
+                    ("Sex", booking['sex']),
+                    ("Coach Type", booking['coach_type']),
+                    ("Number of Passengers", booking['num_passengers']),
+                    ("Total Price", f"₹{booking['total_price']:.2f}")
+                ]
+
+                for label, value in details:
+                    frame = ttk.Frame(main_frame)
+                    frame.pack(fill="x", pady=5)
+                    ttk.Label(frame, text=f"{label}:", 
+                             font=('Helvetica', 11, 'bold')).pack(side="left")
+                    ttk.Label(frame, text=str(value),
+                             font=('Helvetica', 11)).pack(side="left", padx=10)
+
+                ttk.Button(main_frame, text="Close", 
+                          command=details_window.destroy).pack(pady=20)
+
+        except Error as e:
+            messagebox.showerror("Error", f"Failed to fetch booking details: {str(e)}")
+        finally:
+            if cursor:
+                cursor.close()
+
+    def create_search_interface(self):
+        main_frame = tk.Frame(self.root, bg="#4287f5")
+        main_frame.place(relx=0.5, rely=0.5, anchor='center', relwidth=0.8, relheight=0.8)
+
+        # Back button to return to home screen
+        ttk.Button(main_frame, text="Back to Home", 
+                  command=self.show_home_screen).pack(pady=10)
+
+        search_frame = tk.Frame(main_frame, bg="#4287f5")
+        search_frame.pack(fill="both", expand=True, padx=20, pady=20)
+
+        # Title
+        tk.Label(search_frame, text="Search Trains", 
+                font=('Helvetica', 24, 'bold'), 
+                bg="#4287f5", fg="white").pack(pady=20)
+
+        # Search inputs frame
+        inputs_frame = tk.Frame(search_frame, bg="#4287f5")
+        inputs_frame.pack(fill="x", padx=50)
+
+        # Departure field
+        tk.Label(inputs_frame, text="From:", 
+                bg="#4287f5", fg="white", 
+                font=('Helvetica', 12)).grid(row=0, column=0, padx=5, pady=5)
+        self.search_departure_entry = ttk.Entry(inputs_frame)
+        self.search_departure_entry.grid(row=0, column=1, padx=5, pady=5)
+
+        # Arrival field
+        tk.Label(inputs_frame, text="To:", 
+                bg="#4287f5", fg="white", 
+                font=('Helvetica', 12)).grid(row=0, column=2, padx=5, pady=5)
+        self.search_arrival_entry = ttk.Entry(inputs_frame)
+        self.search_arrival_entry.grid(row=0, column=3, padx=5, pady=5)
+
+        # Date field
+        tk.Label(inputs_frame, text="Date:", 
+                bg="#4287f5", fg="white", 
+                font=('Helvetica', 12)).grid(row=0, column=4, padx=5, pady=5)
+        self.search_date_entry = DateEntry(inputs_frame, date_pattern='yyyy-mm-dd')
+        self.search_date_entry.grid(row=0, column=5, padx=5, pady=5)
+
+        # Search button
+        ttk.Button(inputs_frame, text="Search", 
+                  command=self.search_trains).grid(row=0, column=6, padx=20, pady=5)
+
+        # Configure grid columns to center the inputs
+        for i in range(7):
+            inputs_frame.grid_columnconfigure(i, weight=1)
+
+        # Create listbox for search results
+        self.train_list = tk.Listbox(search_frame, height=15, width=70)
+        self.train_list.pack(pady=20)
+        self.train_list.bind('<<ListboxSelect>>', self.on_train_select)
+
+        # Book button
+        ttk.Button(search_frame, text="Book Selected Train", 
+                  command=self.book_train).pack(pady=10)
+
+
+    
+        
+        
+
+    def logout(self):
+    # Clear existing widgets while preserving the root window
+        for widget in self.root.winfo_children():
+            widget.destroy()
+        
+        # Reset the background
+        set_background(self.root, r"C:\Users\Lenovo\Downloads\DALL·E 2024-10-16 17.02.11 - A sleek, modern train traveling through a scenic natural landscape. The train is futuristic in design with large windows, smooth metallic surfaces, an.png")
+        
+        # Show login page
+        login_page(self.root, self.conn)
+
+
+    def book_train(self):
+        if not self.train_list.curselection():
+            messagebox.showerror("Error", "Please select a train first")
+            return
+            
+        # Clear existing widgets
+        for widget in self.root.winfo_children():
+            widget.destroy()
+            
+        # Set new background
+        set_background(self.root, r"C:\Users\Lenovo\Downloads\DALL·E 2024-10-16 17.02.11 - A sleek, modern train traveling through a scenic natural landscape. The train is futuristic in design with large windows, smooth metallic surfaces, an.png")
+        
+        # Show booking screen
+        self.book_train_screen()
+
+    def book_train_screen(self):
+        main_frame = tk.Frame(self.root, bg="#5622b5")
+        main_frame.place(relx=0.5, rely=0.5, anchor='center', relwidth=0.8, relheight=0.8)
+
+        booking_frame = tk.Frame(main_frame, bg="#5622b5", padx=20, pady=20)
+        booking_frame.pack(fill="both", expand=True)
+
+        tk.Label(booking_frame, text="Book Train", font=('Helvetica', 24, 'bold'), 
+                bg="#5622b5", fg="white").grid(row=0, column=0, columnspan=2, pady=20)
+
+        # Train ID field
+        tk.Label(booking_frame, text="Train ID:", bg="#5622b5", fg="white").grid(
+            row=1, column=0, sticky=tk.E, padx=10, pady=10)
+        self.train_id_entry = ttk.Entry(booking_frame, width=30, state='readonly')
+        self.train_id_entry.grid(row=1, column=1, padx=10, pady=10)
+        
+        if self.selected_train_id:
+            self.train_id_entry.configure(state='normal')
+            self.train_id_entry.delete(0, tk.END)
+            self.train_id_entry.insert(0, self.selected_train_id)
+            self.train_id_entry.configure(state='readonly')
+
+        # Coach Type field
+        tk.Label(booking_frame, text="Coach Type:", bg="#5622b5", fg="white").grid(
+            row=2, column=0, sticky=tk.E, padx=10, pady=10)
+        
+        self.coach_type_var = tk.StringVar()
+        coach_types = ["Select Coach Type"]
+        
+        try:
+            coach_types.extend(self.get_coach_types())
+        except Error as e:
+            print(f"Error loading coach types: {e}")
+            messagebox.showerror("Error", "Failed to load coach types")
+        
+        self.coach_type_combobox = ttk.Combobox(booking_frame, textvariable=self.coach_type_var,
+                                               values=coach_types, state="readonly", width=28)
+        self.coach_type_combobox.current(0)
+        self.coach_type_combobox.grid(row=2, column=1, padx=10, pady=10)
+
+        # Passenger details
+        fields = [
+            ("Passenger Name:", "passenger_name_entry"),
+            ("Age:", "age_entry"),
+            ("Sex:", "sex_entry"),
+            ("Number of Passengers:", "num_passengers_entry")
+        ]
+        
+        for i, (label, entry_name) in enumerate(fields):
+            tk.Label(booking_frame, text=label, bg="#5622b5", fg="white").grid(
+                row=i+3, column=0, sticky=tk.E, padx=10, pady=10)
+            setattr(self, entry_name, ttk.Entry(booking_frame, width=30))
+            getattr(self, entry_name).grid(row=i+3, column=1, padx=10, pady=10)
+
+        # Date field
+        tk.Label(booking_frame, text="Date:", bg="#5622b5", fg="white").grid(
+            row=7, column=0, sticky=tk.E, padx=10, pady=10)
+        self.date_entry = DateEntry(booking_frame, date_pattern='yyyy-mm-dd', width=28)
+        self.date_entry.grid(row=7, column=1, padx=10, pady=10)
+
+        # Buttons
+        book_button = tk.Button(booking_frame, text="Book Now", 
+                               command=self.book_train_now,
+                               bg='#03fcb1', fg='black',
+                               font=('Helvetica', 12, 'bold'),
+                               width=15, height=2)
+        book_button.grid(row=8, column=0, columnspan=2, pady=20)
+
+        back_button = tk.Button(booking_frame, text="Back",
+                               command=self.show_search_trains_screen,
+                               bg='#0356fc', fg='white',
+                               font=('Helvetica', 12, 'bold'),
+                               width=15, height=2)
+        back_button.grid(row=9, column=0, columnspan=2, pady=10)
+
+        # Configure grid weights
+        booking_frame.grid_columnconfigure(0, weight=1)
+        booking_frame.grid_columnconfigure(1, weight=1)
+       
+    def book_train_now(self):
+        if not self.selected_train_id:
+            messagebox.showerror("Error", "Please select a valid train first")
+            return
+
+        coach_type = self.coach_type_var.get()
+        passenger_name = self.passenger_name_entry.get()
+        age = self.age_entry.get()
+        sex = self.sex_entry.get()
+        num_passengers = self.num_passengers_entry.get()
+        date = self.date_entry.get()
+
+        # Input validation
+        empty_fields = []
+        if coach_type == "Select Coach Type":
+            empty_fields.append("Coach Type")
+        if not passenger_name:
+            empty_fields.append("Passenger Name")
+        if not age:
+            empty_fields.append("Age")
+        if not sex:
+            empty_fields.append("Sex")
+        if not num_passengers:
+            empty_fields.append("Number of Passengers")
+        if not date:
+            empty_fields.append("Date")
+
+        if empty_fields:
+            error_message = "Please fill in the following fields:\n- " + "\n- ".join(empty_fields)
+            messagebox.showerror("Incomplete Form", error_message)
+            return
+
+        cursor = None
+        try:
+            age = int(age)
+            num_passengers = int(num_passengers)
+            
+            cursor = self.conn.cursor()
+            
+            # Verify train exists
+            cursor.execute('SELECT COUNT(*) FROM Trains WHERE id = %s', (self.selected_train_id,))
+            if cursor.fetchone()[0] == 0:
+                messagebox.showerror("Error", "Invalid train selection")
+                return
+            
+            # Get coach price
+            cursor.execute('SELECT base_price FROM CoachTypes WHERE name = %s', (coach_type,))
+            result = cursor.fetchone()
+            
+            if result is None:
+                messagebox.showerror("Error", f"Could not find price for coach type: {coach_type}")
+                return
+                    
+            base_price = result[0]
+            total_price = num_passengers * float(base_price)
+
+            # Insert booking
+            cursor.execute('''
+                INSERT INTO Bookings 
+                (train_id, coach_type, passenger_name, age, sex, num_passengers, date, total_price)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            ''', (self.selected_train_id, coach_type, passenger_name, age, sex, num_passengers, date, total_price))
+            
+            self.conn.commit()
+            self.process_payment(total_price)
+
+        except ValueError as e:
+            messagebox.showerror("Invalid Input", "Please enter valid numeric values for age and number of passengers.")
+        except Error as e:
+            print(f"MySQL error: {e}")
+            messagebox.showerror("Database Error", f"An error occurred while processing the booking: {str(e)}")
+        finally:
+            if cursor:
+                cursor.close()
+
+
+
+    def process_payment(self, total_price):
+        payment_window = tk.Toplevel(self.root)
+        payment_window.title("Payment")
+        payment_window.geometry("500x400")
+        payment_window.configure(bg='#c9a7c1')  # Set the main window background color
+        
+        # Center the payment window on screen
+        window_width = 500
+        window_height = 400
+        screen_width = payment_window.winfo_screenwidth()
+        screen_height = payment_window.winfo_screenheight()
+        x = (screen_width - window_width) // 2
+        y = (screen_height - window_height) // 2
+        payment_window.geometry(f"{window_width}x{window_height}+{x}+{y}")
+
+        # Payment frame with matching background
+        payment_frame = ttk.Frame(payment_window, padding="20", style='Payment.TFrame')
+        payment_frame.pack(fill="both", expand=True)
+
+        # Create a custom style for the frame
+        style = ttk.Style()
+        style.configure('Payment.TFrame', background='#c9a7c1')
+        
+        # Configure styles for labels to match background
+        style.configure('Payment.TLabel', background='#c9a7c1')
+
+        # Title
+        ttk.Label(payment_frame, text="Payment Details", 
+                  font=('Helvetica', 16, 'bold'), 
+                  style='Payment.TLabel').pack(pady=10)
+        
+        # Amount display
+        ttk.Label(payment_frame, text=f"Total Amount: ₹{total_price:.2f}", 
+                  font=('Helvetica', 12),
+                  style='Payment.TLabel').pack(pady=10)
+
+        # Payment method selection
+        ttk.Label(payment_frame, text="Select Payment Method:", 
+                  font=('Helvetica', 12),
+                  style='Payment.TLabel').pack(pady=5)
+        payment_method = tk.StringVar(value="CARD")
+        
+        def show_payment_fields(*args):
+            # Clear previous fields
+            for widget in payment_fields_frame.winfo_children():
+                widget.destroy()
+                
+            if payment_method.get() == "CARD":
+                ttk.Label(payment_fields_frame, text="Card Number:",
+                         style='Payment.TLabel').pack(pady=5)
+                card_number = ttk.Entry(payment_fields_frame)
+                card_number.pack(pady=5)
+                
+                ttk.Label(payment_fields_frame, text="Expiry Date (MM/YY):",
+                         style='Payment.TLabel').pack(pady=5)
+                expiry = ttk.Entry(payment_fields_frame)
+                expiry.pack(pady=5)
+                
+                ttk.Label(payment_fields_frame, text="CVV:",
+                         style='Payment.TLabel').pack(pady=5)
+                cvv = ttk.Entry(payment_fields_frame, show="*")
+                cvv.pack(pady=5)
+                
+            elif payment_method.get() == "UPI":
+                ttk.Label(payment_fields_frame, text="UPI ID:",
+                         style='Payment.TLabel').pack(pady=5)
+                upi_id = ttk.Entry(payment_fields_frame)
+                upi_id.pack(pady=5)
+
+        # Radio buttons with custom style
+        style.configure('Payment.TRadiobutton', background='#c9a7c1')
+        ttk.Radiobutton(payment_frame, text="Card Payment", 
+                        variable=payment_method, value="CARD",
+                        style='Payment.TRadiobutton').pack()
+        ttk.Radiobutton(payment_frame, text="UPI Payment", 
+                        variable=payment_method, value="UPI",
+                        style='Payment.TRadiobutton').pack()
+
+        # Frame for payment fields with matching background
+        payment_fields_frame = ttk.Frame(payment_frame, style='Payment.TFrame')
+        payment_fields_frame.pack(pady=10)
+
+        # Show initial payment fields
+        payment_method.trace('w', show_payment_fields)
+        show_payment_fields()
+
+        def process_payment_submission():
+            # Simulate payment processing
+            messagebox.showinfo("Success", "Payment processed successfully!")
+            payment_window.destroy()
+            # Generate and show booking confirmation
+            self.show_booking_confirmation(total_price)
+
+        # Pay button
+        ttk.Button(payment_frame, text="Pay Now", 
+                   command=process_payment_submission).pack(pady=20)
+
+    
+    def show_booking_confirmation(self, total_price):
+    # Generate booking confirmation number
+        booking_number = f"TKT{random.randint(100000, 999999)}"
+        
+        confirmation_window = tk.Toplevel(self.root)
+        confirmation_window.title("Booking Confirmation")
+        confirmation_window.geometry("400x500")
+        
+        # Center the confirmation window
+        window_width = 400
+        window_height = 500
+        screen_width = confirmation_window.winfo_screenwidth()
+        screen_height = confirmation_window.winfo_screenheight()
+        x = (screen_width - window_width) // 2
+        y = (screen_height - window_height) // 2
+        confirmation_window.geometry(f"{window_width}x{window_height}+{x}+{y}")
+
+        # Confirmation frame
+        conf_frame = ttk.Frame(confirmation_window, padding="20")
+        conf_frame.pack(fill="both", expand=True)
+
+        # Confirmation details
+        ttk.Label(conf_frame, text="Booking Confirmed!", font=('Helvetica', 16, 'bold')).pack(pady=10)
+        ttk.Label(conf_frame, text=f"Booking Number: {booking_number}", font=('Helvetica', 12)).pack(pady=5)
+        ttk.Label(conf_frame, text=f"Amount Paid: ₹{total_price:.2f}", font=('Helvetica', 12)).pack(pady=5)
+        
+        # Add a "Print Ticket" button
+        def print_ticket():
+            messagebox.showinfo("Print Ticket", "Ticket has been sent to the printer.")
+            
+        ttk.Button(conf_frame, text="Print Ticket", command=print_ticket).pack(pady=20)
+        ttk.Button(conf_frame, text="Close", command=confirmation_window.destroy).pack(pady=10)    
+                
+        
+   
+    def back_to_home(self):
+        for widget in self.root.winfo_children():
+            widget.destroy()
+        self.background_frame.destroy()
+        set_background(self.root, r"C:\Users\Lenovo\Downloads\DALL·E 2024-10-16 17.02.11 - A sleek, modern train traveling through a scenic natural landscape. The train is futuristic in design with large windows, smooth metallic surfaces, an.png")
+        self.create_widgets()
+
+    def get_coach_types(self):
+        cursor = None
+        try:
+            # Create a new buffered cursor for this operation
+            cursor = self.conn.cursor(buffered=True)
+            cursor.execute('SELECT name FROM CoachTypes')
+            coach_types = [row[0] for row in cursor.fetchall()]
+            return coach_types
+        except Error as e:
+            print(f"MySQL error: {e}")
+            return []
+        finally:
+            if cursor:
+                cursor.close()
+
+    def search_trains(self):
+        departure = self.search_departure_entry.get()
+        arrival = self.search_arrival_entry.get()
+        date = self.search_date_entry.get()
+        cursor = None
+
+        try:
+            # Clear any previous train selection
+            self.selected_train_id = None
+            
+            cursor = self.conn.cursor(buffered=True)  # Use buffered cursor
+            
+            query = """
+            SELECT id, train_number, name, source, destination, seats
+            FROM Trains
+            WHERE LOWER(source) LIKE LOWER(%s) 
+            AND LOWER(destination) LIKE LOWER(%s)
+            """
+            
+            departure_search = f'%{departure.replace("New ", "")}%'
+            arrival_search = f'%{arrival}%'
+            
+            cursor.execute(query, (departure_search, arrival_search))
+            trains = cursor.fetchall()
+
+            self.train_list.delete(0, tk.END)
+            if trains:
+                for train in trains:
+                    train_info = f"{train[2]} ({train[1]}) - From: {train[3]} To: {train[4]} - Seats Available: {train[5]}"
+                    self.train_list.insert(tk.END, train_info)
+            else:
+                alternative_query = """
+                SELECT id, train_number, name, source, destination, seats
+                FROM Trains
+                WHERE LOWER(source) LIKE LOWER(%s) 
+                OR LOWER(destination) LIKE LOWER(%s)
+                """
+                cursor.execute(alternative_query, ('%Delhi%', '%Mumbai%'))
+                alternative_trains = cursor.fetchall()
+                
+                if alternative_trains:
+                    self.train_list.insert(tk.END, "Showing related trains:")
+                    for train in alternative_trains:
+                        train_info = f"{train[2]} ({train[1]}) - From: {train[3]} To: {train[4]} - Seats Available: {train[5]}"
+                        self.train_list.insert(tk.END, train_info)
+                else:
+                    self.train_list.insert(tk.END, "No trains found for the given criteria.")
+                    messagebox.showinfo("No Trains", "No trains found for the given criteria.")
+
+        except Error as e:
+            print(f"MySQL error: {e}")
+            messagebox.showerror("Database Error", f"An error occurred: {str(e)}")
+        finally:
+            if cursor:
+                cursor.close()
+
+            
+    def on_train_select(self, event):
+        if not self.train_list.curselection():
+            return
+        
+        selected_train = self.train_list.get(self.train_list.curselection())
+        cursor = None
+        
+        try:
+            # Extract train number from the selected string
+            train_number = selected_train.split('(')[1].split(')')[0].strip()
+            
+            # Create a new buffered cursor for this operation
+            cursor = self.conn.cursor(buffered=True)
+            
+            # Query to get train ID
+            cursor.execute('SELECT id FROM Trains WHERE train_number = %s', (train_number,))
+            result = cursor.fetchone()
+            
+            if result:
+                self.selected_train_id = result[0]
+                print(f"Selected train ID: {self.selected_train_id}")
+            else:
+                self.selected_train_id = None
+                print("Could not find train ID in database")
+                
+        except (IndexError, Error) as e:
+            self.selected_train_id = None
+            print(f"Error getting train ID: {e}")
+        finally:
+            if cursor:
+                cursor.close()
+
+
+def login_page(root, conn):
+    # Clear existing widgets except background
+    for widget in root.winfo_children():
+        if not isinstance(widget, tk.Label) or not hasattr(widget, 'image'):
+            widget.destroy()
+            
+    # Ensure background is set
+    set_background(root, r"C:\Users\Lenovo\Downloads\DALL·E 2024-10-16 17.02.11 - A sleek, modern train traveling through a scenic natural landscape. The train is futuristic in design with large windows, smooth metallic surfaces, an.png")
+    
+    frame = ttk.Frame(root, padding="10")
+    frame.place(relx=0.5, rely=0.5, anchor='center')
+    
+    ttk.Label(frame, text="Login Page", font=('Helvetica', 24, 'bold'), background='lightblue').grid(row=0, column=0, columnspan=2, padx=5, pady=10)
+    ttk.Label(frame, text="Username:").grid(row=1, column=0, padx=5, pady=5)
+    username_entry = ttk.Entry(frame, width=20)
+    username_entry.grid(row=1, column=1, padx=5, pady=5)
+    
+    ttk.Label(frame, text="Password:").grid(row=2, column=0, padx=5, pady=5)
+    password_entry = ttk.Entry(frame, show="*", width=20)
+    password_entry.grid(row=2, column=1, padx=5, pady=5)
+    
+    # Custom button style with larger size
+    button_style = {
+        'font': ('Helvetica', 11),
+        'width': 15,
+        'height': 2,
+        'borderwidth': 2,
+        'relief': 'raised',
+        'cursor': 'hand2'  # Changes cursor to hand when hovering over buttons
+    }
+    
+    login_btn = tk.Button(frame, text="Login", command=lambda: login(username_entry, password_entry, conn),
+                         bg='#a825c2', fg='white', activebackground='#8a1ea3', activeforeground='white',
+                         **button_style)
+    login_btn.grid(row=3, column=0, padx=10, pady=15)
+    
+    register_btn = tk.Button(frame, text="Register", command=lambda: register_page(root, conn),
+                            bg='#c22595', fg='white', activebackground='#a01f7a', activeforeground='white',
+                            **button_style)
+    register_btn.grid(row=3, column=1, padx=10, pady=15)
+    
+    forget_btn = tk.Button(frame, text="Forget Password", command=lambda: forget_password(root, conn),
+                          bg='#c22595', fg='white', activebackground='#a01f7a', activeforeground='white',
+                          font=('Helvetica', 11), width=20, height=2,  # Slightly wider for forget password
+                          borderwidth=2, relief='raised', cursor='hand2')
+    forget_btn.grid(row=4, column=0, columnspan=2, padx=10, pady=15)
+                
+                
+def forget_password(root, conn):
+    frame = ttk.Frame(root, padding="10")
+    frame.place(relx=0.5, rely=0.5, anchor='center')
+
+    ttk.Label(frame, text="Forget Password", font=('Helvetica', 24, 'bold'), background='lightblue').grid(row=0, column=0, columnspan=2, padx=5, pady=10)
+
+    ttk.Label(frame, text="Username:").grid(row=1, column=0, padx=5, pady=5)
+    username_entry = ttk.Entry(frame, width=20)
+    username_entry.grid(row=1, column=1, padx=5, pady=5)
+
+    ttk.Label(frame, text="What is your pet's name?").grid(row=2, column=0, padx=5, pady=5)
+    question1_entry = ttk.Entry(frame, width=20)
+    question1_entry.grid(row=2, column=1, padx=5, pady=5)
+
+    ttk.Label(frame, text="What is your favorite hobby?").grid(row=3, column=0, padx=5, pady=5)
+    question2_entry = ttk.Entry(frame, width=20)
+    question2_entry.grid(row=3, column=1, padx=5, pady=5)
+    ttk.Label(frame, text="What is your favorite food?").grid(row=4, column=0, padx=5, pady=5)
+    question3_entry = ttk.Entry(frame, width=20)
+    question3_entry.grid(row=4, column=1, padx=5, pady=5)
+
+    ttk.Button(frame, text="Submit", command=lambda: submit_forget_password(username_entry, question1_entry, question2_entry, question3_entry, conn), style='Login.TButton').grid(row=5 , column=0, columnspan=2, padx=5, pady=10)
+
+def submit_forget_password(username_entry, question1_entry, question2_entry, question3_entry, conn):
+    username = username_entry.get()
+    question1 = question1_entry.get()
+    question2 = question2_entry.get()
+    question3 = question3_entry.get()
+
+    # In a real application, you would check these answers against stored values
+    # For this example, we'll assume the answers are correct
+
+    login_frame = username_entry.master
+    for widget in login_frame.winfo_children():
+        widget.destroy()
+
+    new_password_frame = ttk.Frame(login_frame)
+    new_password_frame.pack(fill="both", expand=True)
+
+    ttk.Label(new_password_frame, text="Choose a new password", font=('Helvetica', 24, 'bold'), background='lightblue').grid(row=0, column=0, columnspan=2, padx=5, pady=(20, 10))
+
+    ttk.Label(new_password_frame, text="New Password:").grid(row=1, column=0, padx=5, pady=5)
+    new_password_entry = ttk.Entry(new_password_frame, show="*", width=20)
+    new_password_entry.grid(row=1, column=1, padx=5, pady=5)
+
+    ttk.Label(new_password_frame, text="Confirm Password:").grid(row=2, column=0, padx=5, pady=5)
+    confirm_password_entry = ttk.Entry(new_password_frame, show="*", width=20)
+    confirm_password_entry.grid(row=2, column=1, padx=5, pady=5)
+
+    def update_password():
+        new_password = new_password_entry.get()
+        confirm_password = confirm_password_entry.get()
+        if new_password == confirm_password:
+            try:
+                cur = conn.cursor()
+                cur.execute('''UPDATE Users SET password = ? WHERE username = ?''', (new_password, username))
+                conn.commit()
+                messagebox.showinfo("Success", "Password updated successfully.")
+                new_password_frame.destroy()
+                login_page(login_frame.master, conn)
+            except Error as e:
+                messagebox.showerror("Error", str(e))
+        else:
+            messagebox.showerror("Error", "Passwords do not match.")
+
+    ttk.Button(new_password_frame, text="Confirm", command=update_password, style='Login.TButton').grid(row=3, column=0, columnspan=2, padx=5, pady=10)
+
+def login(username_entry, password_entry, conn):
+    username = username_entry.get()
+    password = password_entry.get()
+    if authenticate_user(conn, username, password):
+        login_page_frame = username_entry.master
+        login_page_frame.destroy()
+        TrainBookingApp(username_entry.master.master, conn)
+    else:
+        messagebox.showerror("Error", "Invalid username or password")
+
+def register_page(root, conn):
+    # Clear existing widgets except background
+    for widget in root.winfo_children():
+        if not isinstance(widget, tk.Label) or not hasattr(widget, 'image'):
+            widget.destroy()
+    
+    # Ensure background is set
+    set_background(root, r"C:\Users\Lenovo\Downloads\DALL·E 2024-10-16 17.02.11 - A sleek, modern train traveling through a scenic natural landscape. The train is futuristic in design with large windows, smooth metallic surfaces, an.png")
+    
+    frame = ttk.Frame(root, padding="10")
+    frame.place(relx=0.5, rely=0.5, anchor='center')
+
+    ttk.Label(frame, text="Register Page", font=('Helvetica', 24, 'bold'), background='lightblue').grid(row=0, column=0, columnspan=2, padx=5, pady=10)
+
+    ttk.Label(frame, text="Username:").grid(row=1, column=0, padx=5, pady=5)
+    username_entry = ttk.Entry(frame, width=20)
+    username_entry.grid(row=1, column=1, padx=5, pady=5)
+
+    ttk.Label(frame, text="Password:").grid(row=2, column=0, padx=5, pady=5)
+    password_entry = ttk.Entry(frame, show="*", width=20)
+    password_entry.grid(row=2, column=1, padx=5, pady=5)
+
+    ttk.Button(frame, text="Register", command=lambda: register(username_entry, password_entry, conn), style='Login.TButton').grid(row=3, column=0, columnspan=2, padx=5, pady=10)
+
+    ttk.Button(frame, text="Back", command=lambda: back_to_login(root, conn), style='Register.TButton').grid(row=4, column=0, columnspan=2, padx=5, pady=10)
+
+def register(username_entry, password_entry, conn):
+    username = username_entry.get()
+    password = password_entry.get()
+    if username and password:
+        if not authenticate_user(conn, username, password):
+            insert_user(conn, username, password)
+            messagebox.showinfo("Success", "Registration successful. You can now log in.")
+            back_to_login(username_entry.master.master, conn)
+        else:
+            messagebox.showerror("Error", "Username already exists.")
+    else:
+        messagebox.showerror("Error", "Please fill in all fields.")
+
+def back_to_login(root, conn):
+    # Clear existing widgets except background
+    for widget in root.winfo_children():
+        if not isinstance(widget, tk.Label) or not hasattr(widget, 'image'):
+            widget.destroy()
+            
+    # Ensure background is set
+    set_background(root, r"C:\Users\Lenovo\Downloads\DALL·E 2024-10-16 17.02.11 - A sleek, modern train traveling through a scenic natural landscape. The train is futuristic in design with large windows, smooth metallic surfaces, an.png")
+    
+    # Show login page
+    login_page(root, conn)
+def main():
+    conn = create_connection()
+    if conn:
+        create_tables(conn)
+        insert_sample_trains(conn)
+
+        root = tk.Tk()
+        screen_width = root.winfo_screenwidth()
+        screen_height = root.winfo_screenheight()
+        root.geometry(f"{screen_width}x{screen_height}+0+0")
+        root.state('zoomed')
+        setup_styles()
+        set_background(root, r"C:\Users\Lenovo\Downloads\DALL·E 2024-10-16 17.02.11 - A sleek, modern train traveling through a scenic natural landscape. The train is futuristic in design with large windows, smooth metallic surfaces, an.png")
+        login_page(root, conn)
+        root.mainloop()
+
+if __name__ == '__main__':
+    main()
